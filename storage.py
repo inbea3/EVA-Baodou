@@ -46,12 +46,6 @@ CREATE TABLE IF NOT EXISTS eva_locks (
     pid INTEGER NOT NULL,
     locked_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
-
-CREATE TABLE IF NOT EXISTS wechat_credentials (
-    id TEXT PRIMARY KEY,
-    content TEXT NOT NULL,
-    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-);
 """
 
 
@@ -74,6 +68,7 @@ def init_schema() -> None:
     if not enabled():
         return
     with _connect() as conn:
+        conn.execute("DROP TABLE IF EXISTS wechat_credentials")
         conn.execute(_SCHEMA)
 
 
@@ -315,38 +310,3 @@ def release_lock(project_dir: str, lock_file: Path) -> None:
         return
     with _connect() as conn:
         conn.execute("DELETE FROM eva_locks WHERE project_dir = %s", (project_dir,))
-
-
-def restore_wechat_creds(cred_path: str) -> bool:
-    if not enabled():
-        return False
-    path = Path(cred_path).expanduser()
-    with _connect() as conn:
-        row = conn.execute(
-            "SELECT content FROM wechat_credentials WHERE id = %s", ("default",)
-        ).fetchone()
-        if not row:
-            return False
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(row[0], encoding="utf-8")
-        return True
-
-
-def save_wechat_creds(cred_path: str) -> bool:
-    path = Path(cred_path).expanduser()
-    if not path.exists():
-        return False
-    content = path.read_text(encoding="utf-8")
-    if not enabled():
-        return False
-    with _connect() as conn:
-        conn.execute(
-            """
-            INSERT INTO wechat_credentials (id, content)
-            VALUES ('default', %s)
-            ON CONFLICT (id) DO UPDATE
-            SET content = EXCLUDED.content, updated_at = NOW()
-            """,
-            (content,),
-        )
-    return True

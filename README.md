@@ -98,8 +98,9 @@ EVA/
 | `eva_sessions` | 对话会话（JSON） |
 | `eva_hints` | 记忆压缩线索 |
 | `eva_knowledge` | 固化知识 / 规则（EVA.md） |
-| `wechat_credentials` | 微信登录凭证 |
 | `eva_locks` | 并发锁（防重复启动） |
+
+微信登录凭证**不存数据库**，由 `WECHATBOT_CRED_PATH` 指向的 JSON 文件保存；Railway 上建议挂载 Volume 到 `/app/data`（见下方说明）。
 
 本地仍会镜像一份文件到 `.eva/`，供 EVA 执行 Shell 命令时读写；**数据库是权威来源**。
 
@@ -144,11 +145,13 @@ python bot.py
 |------|------|
 | `EVA_TASK_TIMEOUT` | 单次 EVA 任务超时秒数，默认 `600` |
 
-### 3. Volume（可选）
+### 3. Volume（微信凭证）
 
-配置了 `DATABASE_URL` 后，**可以不挂 Volume**，会话/凭证/知识库均存 Neon。
+配置了 `DATABASE_URL` 后，会话/知识/线索已存 Neon，**但微信凭证仍是本地 JSON 文件**。
 
-若未配置数据库，才需要挂载 Volume 到 `/app/data` 以保留数据。
+建议在 Railway **Settings → Volumes** 挂载 `/app/data`，凭证会写到 `/app/data/wechatbot/credentials.json`，重启后免扫码。
+
+若未挂 Volume，每次重新部署需在微信 Logs 里扫码登录一次。
 
 ### 4. 启动命令
 
@@ -170,7 +173,7 @@ bash start.sh
 
 ### 5. 首次微信登录
 
-部署完成后打开 **Deploy Logs**，搜索「请用微信扫描登录」，用手机微信扫码。凭证会同步到 Neon，后续重启无需重复扫码。
+部署完成后打开 **Deploy Logs**，搜索「请用微信扫描登录」，用手机微信扫码。若已挂载 Volume 且凭证文件仍在，则无需扫码。
 
 ### 6. 本地模拟 Railway 启动
 

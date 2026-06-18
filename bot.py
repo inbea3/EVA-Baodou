@@ -3,8 +3,6 @@ import os
 import re
 import sys
 import subprocess
-import threading
-import time
 from pathlib import Path
 
 import storage
@@ -72,32 +70,16 @@ def _log_qr(url: str):
     print(f"\n{'=' * 60}\n请用微信扫描登录:\n{url}\n{'=' * 60}\n", flush=True)
 
 
-def _sync_creds_after_login(cred_path: str):
-    def worker():
-        for _ in range(15):
-            time.sleep(2)
-            if storage.save_wechat_creds(cred_path):
-                print("> 微信凭证已同步到数据库", flush=True)
-                return
-    threading.Thread(target=worker, daemon=True).start()
-
-
 def main():
     health.start()
     storage.init_schema()
     cred_path = _cred_path()
     Path(cred_path).expanduser().parent.mkdir(parents=True, exist_ok=True)
 
-    if storage.restore_wechat_creds(cred_path):
-        print("> 已从数据库恢复微信凭证", flush=True)
-
     bot = WeChatBot(
         cred_path=cred_path,
         on_qr_url=_log_qr,
-        on_scanned=lambda: (
-            print("已扫码，等待手机确认...", flush=True),
-            _sync_creds_after_login(cred_path),
-        ),
+        on_scanned=lambda: print("已扫码，等待手机确认...", flush=True),
         on_expired=lambda: print("二维码已过期，等待刷新...", flush=True),
         on_error=lambda err: print(f"微信 Bot 错误: {err}", flush=True),
     )
