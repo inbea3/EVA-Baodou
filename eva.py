@@ -8,6 +8,8 @@ import urllib.error
 from pathlib import Path
 from datetime import date
 
+import storage
+
 _resolved = Path(__file__).resolve()
 this_file = str(_resolved)
 this_dir = _resolved.parent
@@ -77,6 +79,9 @@ SESSION_DIR = os.path.join(EVA_HOME, "sessions")
 PROJECT_DIR = os.getcwd()
 PROJECT_EVA_DIR = os.path.join(PROJECT_DIR, ".eva")
 HINT_FILE = os.path.join(PROJECT_EVA_DIR, "hints.md")
+
+def _project_key():
+    return re.sub(r"[\\/:]", "_", PROJECT_DIR)
 
 # ====================== 跨平台配置区 ======================
 IS_WINDOWS = os.name == "nt"
@@ -289,8 +294,8 @@ def _trim_tool_content(msg):
         msg = {**msg, 'content': c[:200] + '\n…（中间内容已省略）…\n' + c[-200:]}
     return msg
 
-def leave_memory_hints(hints):
-    global messages, COMPACT_PANIC
+def leave_memory_hints(hints_text):
+    global messages, COMPACT_PANIC, hints
 
     compact_i = -1
     for i in range(len(messages)-1, -1, -1):
@@ -310,7 +315,7 @@ def leave_memory_hints(hints):
         kept.append(_trim_tool_content(m))
 
     messages = [
-            {"role": "system", "content": SYSTEM_PROMPT.format(eva_md=eva_md or "无", hints=hints or "无", env_info=ENV_INFO)},
+            {"role": "system", "content": SYSTEM_PROMPT.format(eva_md=eva_md or "无", hints=hints_text or "无", env_info=ENV_INFO)},
             {"role": "user", "content":
                 "《系统提示》！！！之前任务过程占用了太多token，记忆已耗尽，记忆压缩被触发。\n" \
                 "不过别担心，记忆压缩时你已经调用leave_memory_hints保留下了关键内容、对应记忆线索（参照系统提示中的`# 记忆线索`区块）以及你最后的回答内容。\n" \
@@ -325,8 +330,8 @@ def leave_memory_hints(hints):
 
     COMPACT_PANIC = False
 
-    with open(HINT_FILE, "w", encoding="utf-8") as f:
-        f.write(hints)
+    hints = hints_text
+    save_hints(_project_key(), hints_text, Path(HINT_FILE))
     return "已留下记忆线索，并清空了对话记录。只保留了最后一次对话"
 
 tool_executors = {
@@ -543,12 +548,16 @@ def llm_chat_stream(messages, tools=None, temperature=0.6, thinking=True):
         usage = {'prompt_tokens': 0, 'completion_tokens': 0, 'total_tokens': 0}
     return message, usage
 
+def save_hints(project_dir, content, hint_file):
+    storage.save_hints(project_dir, content, hint_file)
+
 # ====================== 加载重要记忆线索 ======================
+storage.init_schema()
 os.makedirs(EVA_HOME, exist_ok=True)
 os.makedirs(PROJECT_EVA_DIR, exist_ok=True)
 
-eva_md = Path(EVA_FILE).read_text(encoding="utf-8") if Path(EVA_FILE).exists() else ""
-hints = Path(HINT_FILE).read_text(encoding="utf-8") if Path(HINT_FILE).exists() else ""
+eva_md = storage.load_knowledge(Path(EVA_FILE), Path(this_dir) / "EVA.md.example")
+hints = storage.load_hints(_project_key(), Path(HINT_FILE))
 messages = [{"role": "system", "content": SYSTEM_PROMPT.format(eva_md=eva_md or "无", hints=hints or "无", env_info=ENV_INFO)}]
 
 # ====================== Session 管理 ======================
@@ -559,45 +568,29 @@ def get_session_file():
     return os.path.join(SESSION_DIR, f"{dir_hash}.json")
 
 def acquire_lock():
-    lock_file = get_session_file().replace(".json", ".lock")
-    if os.path.exists(lock_file):
-        try:
-            pid = int(Path(lock_file).read_text().strip())
-            # 检查该 PID 是否仍在运行
-            if IS_WINDOWS:
-                result = subprocess.run(
-                    ["tasklist", "/FI", f"PID eq {pid}"],
-                    capture_output=True, text=True
-                )
-                alive = str(pid) in result.stdout
-            else:
-                alive = os.path.exists(f"/proc/{pid}")
-            if alive:
-                print(f"错误：该目录已有 EVA 实例正在运行（PID: {pid}），不允许重复启动。")
-                print(f"如需强制启动，请先删除锁文件：{lock_file}")
-                sys.exit(1)
-        except Exception:
-            pass  # lock 文件损坏，直接覆盖
-    Path(lock_file).write_text(str(os.getpid()))
+    lock_file = Path(get_session_file().replace(".json", ".lock"))
+    ok, msg = storage.try_acquire_lock(_project_key(), os.getpid(), lock_file, IS_WINDOWS)
+    if not ok:
+        print(msg)
+        if not storage.enabled():
+            print(f"如需强制启动，请先删除锁文件：{lock_file}")
+        sys.exit(1)
 
 def release_lock():
-    try:
-        os.remove(get_session_file().replace(".json", ".lock"))
-    except Exception:
-        pass
+    storage.release_lock(_project_key(), Path(get_session_file().replace(".json", ".lock")))
 
 def save_session(messages):
-    session_file = get_session_file()
-    with open(session_file, "w", encoding="utf-8") as f:
-        json.dump(messages, f, ensure_ascii=False, indent=2)
-    print(f"\n> 会话已保存到：{session_file}")
+    location = storage.save_session(_project_key(), messages, Path(get_session_file()))
+    print(f"\n> 会话已保存到：{location}")
 
 def load_session():
     session_file = get_session_file()
     try:
-        with open(session_file, "r", encoding="utf-8") as f:
-            messages = json.load(f)
-        
+        loaded, size_KB = storage.load_session(_project_key(), Path(session_file))
+        if loaded is None:
+            return None
+        messages = loaded
+
         ## eva运行过程可能自主修改hints，下载启动时需要重新载入hints，而不是复用session
         messages[0] = {"role": "system", "content": SYSTEM_PROMPT.format(eva_md=eva_md or "无", hints=hints or "无", env_info=ENV_INFO)}
 
@@ -607,8 +600,7 @@ def load_session():
                 del last_msg['tool_calls']
             if not last_msg['content']:
                 del messages[-1]
-        size_KB = (os.path.getsize(session_file) + 999) // 1000
-        print(f"\n> 会话已从文件加载：{session_file} ({format(size_KB, ',')} KB)")
+        print(f"\n> 会话已加载：{session_file} ({format(size_KB, ',')} KB)")
         return messages
     except Exception:
         return None
@@ -616,33 +608,12 @@ def load_session():
 def list_sessions():
     session_file = get_session_file()
     session_name = os.path.basename(session_file)
-    print(f"目录: {SESSION_DIR}\n")
-    if not os.path.exists(SESSION_DIR):
-        print("> 没有找到任何会话记录。")
-        return
-
-    files = [f for f in os.listdir(SESSION_DIR) if f.endswith('.json')]
-    if not files:
-        print("> 没有找到任何会话记录。")
-        return
-
-    print(f"> 共找到 {len(files)} 个会话:")
-    print("-" * 60)
-    for i, f in enumerate(sorted(files), start=1):
-        path = os.path.join(SESSION_DIR, f)
-        size_KB = (os.path.getsize(path) + 999) // 1000
-        marker = "    <=== 当前目录" if f == session_name else ""
-        print(f"  {i}. {f} ({format(size_KB, ',')} KB){marker}")
-    print("-" * 60)
+    storage.list_sessions(_project_key(), Path(SESSION_DIR), session_name)
 
 def clear_session():
     session_file = get_session_file()
-    if os.path.exists(session_file):
-        try:
-            os.remove(session_file)
-            print(f"> 已清除会话：{session_file}")
-        except Exception as e:
-            print(f"> 清除会话失败：{e}")
+    if storage.clear_session(_project_key(), Path(session_file)):
+        print(f"> 已清除会话：{session_file}")
     else:
         print(f"> 会话不存在：{session_file}")
 

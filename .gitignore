@@ -19,6 +19,9 @@ build/
 venv/
 env/
 
+# 本地持久化测试目录
+data/
+
 # 微信 Bot 凭证
 .wechatbot/
 

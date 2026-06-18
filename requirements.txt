@@ -1,2 +1,2 @@
-# 仅 bot.py（微信接入）需要；直接运行 eva.py 无需安装依赖
 wechatbot-sdk>=0.2.1
+psycopg[binary]>=3.1

@@ -70,6 +70,10 @@ python eva.py -a   # 开发调试：跳过命令确认
 EVA/
 ├── eva.py           # 主程序
 ├── bot.py           # 微信 Bot 入口（可选）
+├── storage.py       # PostgreSQL / 文件双模式持久化
+├── start.sh         # Railway / 生产环境启动脚本
+├── railway.toml     # Railway 部署配置
+├── runtime.txt      # Python 版本（Nixpacks）
 ├── EVA.md.example   # 固化知识/规则模板
 ├── .env.example     # 环境变量示例
 └── requirements.txt # bot.py 依赖
@@ -85,6 +89,27 @@ EVA/
 
 首次使用前，可将 `EVA.md.example` 复制为 `.eva/EVA.md` 并按需编辑。
 
+## Neon 数据库（推荐生产环境）
+
+配置 `DATABASE_URL` 后，以下数据写入 **Neon PostgreSQL**，容器重启不丢失：
+
+| 表名 | 内容 |
+|------|------|
+| `eva_sessions` | 对话会话（JSON） |
+| `eva_hints` | 记忆压缩线索 |
+| `eva_knowledge` | 固化知识 / 规则（EVA.md） |
+| `wechat_credentials` | 微信登录凭证 |
+| `eva_locks` | 并发锁（防重复启动） |
+
+本地仍会镜像一份文件到 `.eva/`，供 EVA 执行 Shell 命令时读写；**数据库是权威来源**。
+
+```bash
+# Railway / Neon Variables 中设置（不要写进代码仓库）
+DATABASE_URL=postgresql://user:pass@host/db?sslmode=require
+```
+
+未配置 `DATABASE_URL` 时自动回退到本地文件存储。
+
 ## 微信 Bot（可选）
 
 ```bash
@@ -93,6 +118,61 @@ python bot.py
 ```
 
 首次运行需微信扫码登录。用户发送消息即触发 EVA 执行任务；发送 `/clear` 或 `clear` 清除当前目录会话。
+
+## 部署到 Railway（长期运行）
+
+微信 Bot 适合作为 **常驻 Worker** 部署在 [Railway](https://railway.app/) 上 24/7 运行。
+
+### 1. 推送代码
+
+将本仓库推送到 GitHub，然后在 Railway 创建项目并连接该仓库。
+
+### 2. 配置环境变量
+
+在 Railway 服务的 **Variables** 中至少设置：
+
+| 变量 | 说明 |
+|------|------|
+| `EVA_API_KEY` | DeepSeek / 兼容 API 密钥（必填） |
+| `DATABASE_URL` | Neon PostgreSQL 连接串（**强烈推荐**） |
+| `EVA_BASE_URL` | 默认 `https://api.deepseek.com` |
+| `EVA_MODEL_NAME` | 建议 `deepseek-reasoner` |
+
+可选：
+
+| 变量 | 说明 |
+|------|------|
+| `EVA_TASK_TIMEOUT` | 单次 EVA 任务超时秒数，默认 `600` |
+
+### 3. Volume（可选）
+
+配置了 `DATABASE_URL` 后，**可以不挂 Volume**，会话/凭证/知识库均存 Neon。
+
+若未配置数据库，才需要挂载 Volume 到 `/app/data` 以保留数据。
+
+### 4. 启动命令
+
+仓库已包含 `railway.toml`，默认启动命令为：
+
+```bash
+bash start.sh
+```
+
+无需公网域名：在 **Settings → Networking** 中关闭 Public Networking（Bot 只需出站连接微信与 LLM API）。
+
+### 5. 首次微信登录
+
+部署完成后打开 **Deploy Logs**，搜索「请用微信扫描登录」，用手机微信扫码。凭证会同步到 Neon，后续重启无需重复扫码。
+
+### 6. 本地模拟 Railway 启动
+
+```bash
+pip install -r requirements.txt
+export EVA_API_KEY="your-api-key"
+bash start.sh
+```
+
+数据会写入项目下的 `data/` 目录（已在 `.gitignore` 中排除）。
 
 ## 安全提示
 
