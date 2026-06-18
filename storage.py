@@ -4,10 +4,23 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import subprocess
 from pathlib import Path
 
-DATABASE_URL = os.environ.get("DATABASE_URL", "")
+DATABASE_URL = _raw_url = os.environ.get("DATABASE_URL", "")
+
+
+def _normalize_database_url(url: str) -> str:
+    """Neon 连接串里的 channel_binding=require 在 Railway 上常导致连接失败。"""
+    if not url:
+        return url
+    url = re.sub(r"([?&])channel_binding=[^&]*&?", r"\1", url)
+    url = url.replace("?&", "?").rstrip("?&")
+    return url
+
+
+DATABASE_URL = _normalize_database_url(_raw_url)
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS eva_knowledge (
@@ -49,7 +62,12 @@ def enabled() -> bool:
 def _connect():
     import psycopg
 
-    return psycopg.connect(DATABASE_URL, autocommit=True)
+    try:
+        return psycopg.connect(DATABASE_URL, autocommit=True, connect_timeout=15)
+    except Exception as e:
+        raise RuntimeError(
+            f"无法连接 Neon 数据库，请检查 DATABASE_URL 是否正确、Neon 项目是否在线。\n详情：{e}"
+        ) from e
 
 
 def init_schema() -> None:

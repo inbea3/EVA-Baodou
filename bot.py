@@ -9,6 +9,8 @@ from pathlib import Path
 
 import storage
 
+import health
+
 ANSI_RE = re.compile(r'\033\[[0-9;]*m')
 
 APP_DIR = Path(__file__).resolve().parent
@@ -81,6 +83,7 @@ def _sync_creds_after_login(cred_path: str):
 
 
 def main():
+    health.start()
     storage.init_schema()
     cred_path = _cred_path()
     Path(cred_path).expanduser().parent.mkdir(parents=True, exist_ok=True)

@@ -20,7 +20,15 @@ fi
 
 if [[ -n "${DATABASE_URL:-}" ]]; then
   echo "> 存储: Neon PostgreSQL (DATABASE_URL 已配置)"
-  python -c "import storage; storage.init_schema(); print('> 数据库表已就绪')"
+  python -c "
+import storage
+try:
+    storage.init_schema()
+    print('> 数据库表已就绪')
+except Exception as e:
+    print(f'错误：{e}')
+    raise
+" || exit 1
 else
   echo "> 存储: 本地文件 (未设置 DATABASE_URL，建议生产环境配置 Neon)"
   if [[ ! -f "$EVA_HOME/EVA.md" && -f "$APP_DIR/EVA.md.example" ]]; then
@@ -31,6 +39,7 @@ fi
 
 echo "> EVA_HOME=$EVA_HOME"
 echo "> WECHATBOT_CRED_PATH=$WECHATBOT_CRED_PATH"
+echo "> PORT=${PORT:-8080} (Railway 健康检查)"
 echo "> 启动微信 Bot..."
 
 exec python -u bot.py

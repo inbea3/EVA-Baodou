@@ -158,7 +158,15 @@ python bot.py
 bash start.sh
 ```
 
-无需公网域名：在 **Settings → Networking** 中关闭 Public Networking（Bot 只需出站连接微信与 LLM API）。
+无需公网域名：Bot 只需**出站**访问微信和 LLM API；关闭 Public Networking 不影响运行。
+
+**重要：** 服务必须在 Railway 注入的 `PORT` 上响应健康检查。本项目已提供 `/health` 探针，请勿在 Settings 里误删 Health Check Path。
+
+若部署日志出现 `service unavailable` 或「没网络」：
+1. 确认 **Settings → Networking → Public Networking 可以关闭**，但服务仍需监听 `$PORT`
+2. 确认 **Health Check Path** 为 `/health`（或留空使用 `railway.toml` 配置）
+3. 检查 `DATABASE_URL` 是否有效（Neon 连接串建议去掉 `channel_binding=require`）
+4. 查看 **Deploy Logs**（不是 Build Logs）里的具体报错
 
 ### 5. 首次微信登录
 
