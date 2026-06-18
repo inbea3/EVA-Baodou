@@ -46,6 +46,13 @@ CREATE TABLE IF NOT EXISTS eva_locks (
     pid INTEGER NOT NULL,
     locked_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
+
+CREATE TABLE IF NOT EXISTS wechat_accounts (
+    account_id TEXT PRIMARY KEY,
+    user_id TEXT NOT NULL,
+    credentials JSONB NOT NULL,
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
 """
 
 
@@ -310,3 +317,108 @@ def release_lock(project_dir: str, lock_file: Path) -> None:
         return
     with _connect() as conn:
         conn.execute("DELETE FROM eva_locks WHERE project_dir = %s", (project_dir,))
+
+
+def _wechat_accounts_dir() -> Path:
+    base = os.environ.get("RAILWAY_VOLUME_MOUNT_PATH") or os.environ.get("EVA_DATA_DIR")
+    if base:
+        return Path(base) / "wechatbot" / "accounts"
+    return Path(__file__).resolve().parent / "data" / "wechatbot" / "accounts"
+
+
+def _safe_account_filename(account_id: str) -> str:
+    return re.sub(r"[^\w.-@]", "_", account_id)
+
+
+def list_wechat_accounts() -> list[dict]:
+    if enabled():
+        with _connect() as conn:
+            rows = conn.execute(
+                "SELECT account_id, user_id, credentials FROM wechat_accounts ORDER BY updated_at"
+            ).fetchall()
+        accounts = []
+        for account_id, user_id, credentials in rows:
+            creds = credentials if isinstance(credentials, dict) else json.loads(credentials)
+            accounts.append(
+                {"account_id": account_id, "user_id": user_id, "credentials": creds}
+            )
+        return accounts
+
+    accounts_dir = _wechat_accounts_dir()
+    if not accounts_dir.exists():
+        return []
+    out = []
+    for path in sorted(accounts_dir.glob("*.json")):
+        if path.name.startswith("_"):
+            continue
+        try:
+            creds = json.loads(path.read_text(encoding="utf-8"))
+            account_id = creds.get("accountId") or creds.get("account_id") or path.stem
+            user_id = creds.get("userId") or creds.get("user_id") or account_id
+            out.append(
+                {"account_id": account_id, "user_id": user_id, "credentials": creds}
+            )
+        except Exception:
+            continue
+    return out
+
+
+def save_wechat_account(account_id: str, user_id: str, credentials: dict) -> None:
+    cred_dir = _wechat_accounts_dir()
+    cred_dir.mkdir(parents=True, exist_ok=True)
+    cred_file = cred_dir / f"{_safe_account_filename(account_id)}.json"
+    cred_file.write_text(json.dumps(credentials, ensure_ascii=False, indent=2), encoding="utf-8")
+
+    if not enabled():
+        return
+    with _connect() as conn:
+        conn.execute(
+            """
+            INSERT INTO wechat_accounts (account_id, user_id, credentials)
+            VALUES (%s, %s, %s::jsonb)
+            ON CONFLICT (account_id) DO UPDATE
+            SET user_id = EXCLUDED.user_id,
+                credentials = EXCLUDED.credentials,
+                updated_at = NOW()
+            """,
+            (account_id, user_id, json.dumps(credentials, ensure_ascii=False)),
+        )
+
+
+def wechat_cred_path(account_id: str) -> Path:
+    return _wechat_accounts_dir() / f"{_safe_account_filename(account_id)}.json"
+
+
+def migrate_legacy_wechat_cred(legacy_path: Path) -> bool:
+    """将旧版单文件 credentials.json 迁移为多账号存储。"""
+    if not legacy_path.exists() or list_wechat_accounts():
+        return False
+    try:
+        creds = json.loads(legacy_path.read_text(encoding="utf-8"))
+    except Exception:
+        return False
+    account_id = creds.get("accountId") or creds.get("account_id")
+    user_id = creds.get("userId") or creds.get("user_id")
+    if not account_id or not user_id:
+        return False
+    save_wechat_account(account_id, user_id, creds)
+    dest = wechat_cred_path(account_id)
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    if legacy_path.resolve() != dest.resolve():
+        dest.write_text(json.dumps(creds, ensure_ascii=False, indent=2), encoding="utf-8")
+    print(f"> 已迁移旧版微信凭证 → 账号 {account_id}", flush=True)
+    return True
+
+
+def sync_wechat_cred_files() -> None:
+    """从数据库记录恢复本地凭证文件（容器重启后 ephemeral 磁盘可能丢失文件）。"""
+    for acc in list_wechat_accounts():
+        path = wechat_cred_path(acc["account_id"])
+        if path.exists():
+            continue
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(
+            json.dumps(acc["credentials"], ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
+        print(f"> 已从数据库恢复凭证文件: {acc['account_id']}", flush=True)

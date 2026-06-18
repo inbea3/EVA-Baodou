@@ -5,7 +5,7 @@ APP_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$APP_DIR"
 
 DATA_DIR="${RAILWAY_VOLUME_MOUNT_PATH:-${EVA_DATA_DIR:-$APP_DIR/data}}"
-mkdir -p "$DATA_DIR/wechatbot" "$DATA_DIR/.eva/sessions" "$APP_DIR/.eva"
+mkdir -p "$DATA_DIR/wechatbot/accounts" "$DATA_DIR/.eva/sessions" "$APP_DIR/.eva"
 
 export EVA_HOME="${EVA_HOME:-$DATA_DIR/.eva}"
 export WECHATBOT_CRED_PATH="${WECHATBOT_CRED_PATH:-$DATA_DIR/wechatbot/credentials.json}"
@@ -39,7 +39,7 @@ fi
 
 echo "> EVA_HOME=$EVA_HOME"
 echo "> WECHATBOT_CRED_PATH=$WECHATBOT_CRED_PATH"
-echo "> PORT=${PORT:-8080} (Railway 健康检查)"
+echo "> PORT=${PORT:-8080} (健康检查 /health，绑定 /bind)"
 echo "> 启动微信 Bot..."
 
 exec python -u bot.py

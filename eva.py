@@ -77,11 +77,28 @@ EVA_FILE = os.path.join(EVA_HOME, "EVA.md")
 SESSION_DIR = os.path.join(EVA_HOME, "sessions")
 
 PROJECT_DIR = os.getcwd()
-PROJECT_EVA_DIR = os.path.join(PROJECT_DIR, ".eva")
-HINT_FILE = os.path.join(PROJECT_EVA_DIR, "hints.md")
 
-def _project_key():
-    return re.sub(r"[\\/:]", "_", PROJECT_DIR)
+
+def _sanitize_key(s: str) -> str:
+    return re.sub(r"[^\w.-]", "_", s)
+
+
+def _project_key() -> str:
+    base = re.sub(r"[\\/:]", "_", PROJECT_DIR)
+    if user_key := os.environ.get("EVA_SESSION_KEY", "").strip():
+        return f"{base}__u_{_sanitize_key(user_key)}"
+    return base
+
+
+def _init_user_scope():
+    if user_key := os.environ.get("EVA_SESSION_KEY", "").strip():
+        eva_dir = os.path.join(PROJECT_DIR, ".eva", "users", _sanitize_key(user_key))
+    else:
+        eva_dir = os.path.join(PROJECT_DIR, ".eva")
+    return eva_dir, os.path.join(eva_dir, "hints.md")
+
+
+PROJECT_EVA_DIR, HINT_FILE = _init_user_scope()
 
 # ====================== 跨平台配置区 ======================
 IS_WINDOWS = os.name == "nt"
@@ -564,8 +581,7 @@ messages = [{"role": "system", "content": SYSTEM_PROMPT.format(eva_md=eva_md or 
 os.makedirs(SESSION_DIR, exist_ok=True)
 
 def get_session_file():
-    dir_hash = re.sub(r"[\\/:]", "_", PROJECT_DIR)
-    return os.path.join(SESSION_DIR, f"{dir_hash}.json")
+    return os.path.join(SESSION_DIR, f"{_project_key()}.json")
 
 def acquire_lock():
     lock_file = Path(get_session_file().replace(".json", ".lock"))
